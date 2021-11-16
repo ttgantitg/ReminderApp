@@ -8,39 +8,97 @@
 import UIKit
 
 class ReminderListViewController: UITableViewController {
+    @IBOutlet var filterSegmentedControl: UISegmentedControl!
+    
+    @IBOutlet var progressContainerView: UIView!
+    @IBOutlet var percentCompleteView: UIView!
+    @IBOutlet var percentIncompleteView: UIView!
+    @IBOutlet var percentCompleteHeightConstraint: NSLayoutConstraint!
+    
     static let showDetailSegueIdentifier = "ShowReminderDetailSegue"
+    static let mainStoryboardName = "Main"
+    static let detailViewControllerIdentifier = "ReminderDetailViewController"
+    
+    private var reminderListDataSource: ReminderListDataSource?
+    private var filter: ReminderListDataSource.Filter {
+        return ReminderListDataSource.Filter(rawValue: filterSegmentedControl.selectedSegmentIndex) ?? .today
+    }
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
         if segue.identifier == Self.showDetailSegueIdentifier,
            let destination = segue.destination as? ReminderDetailViewController,
            let cell = sender as? UITableViewCell,
            let indexPath = tableView.indexPath(for: cell) {
-            let reminder = Reminder.testData[indexPath.row]
-            destination.configure(with: reminder)
+            let rowIndex = indexPath.row
+            guard let reminder = reminderListDataSource?.reminder(at: rowIndex) else {
+                fatalError("Couldn't find data source for reminder list.")
+            }
+            destination.configure(with: reminder) { reminder in
+                self.reminderListDataSource?.update(reminder, at: rowIndex)
+                self.tableView.reloadData()
+                self.refreshProgressView()
+            }
         }
     }
-}
-
-extension ReminderListViewController {
-    static let reminderListCellIdentifier = "ReminderListCell"
     
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return Reminder.testData.count
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        reminderListDataSource = ReminderListDataSource(reminderCompletedAction: { reminderIndex in
+            self.tableView.reloadRows(at: [IndexPath(row: reminderIndex, section: 0)], with: .automatic)
+            self.refreshProgressView()
+        }, reminderDeletedAction: {
+            self.refreshProgressView()
+        })
+        tableView.dataSource = reminderListDataSource
     }
     
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        guard let cell = tableView.dequeueReusableCell(withIdentifier: Self.reminderListCellIdentifier, for: indexPath) as? ReminderListCell else {
-            fatalError("Unable to dequeue ReminderCell")
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        let radius = view.bounds.size.width * 0.5 * 0.7
+        progressContainerView.layer.cornerRadius = radius
+        progressContainerView.layer.masksToBounds = true
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if let navigationController = navigationController,
+           navigationController.isToolbarHidden {
+            navigationController.setToolbarHidden(false, animated: animated)
         }
-        let reminder = Reminder.testData[indexPath.row]
-        let image = reminder.isComplete ? UIImage(systemName: "circle.fill") : UIImage(systemName: "circle")
-        cell.titleLabel.text = reminder.title
-        cell.dateLabel.text = reminder.dueDate.description
-        cell.doneButton.setBackgroundImage(image, for: .normal)
-        cell.doneActionButton = {
-            Reminder.testData[indexPath.row].isComplete.toggle()
-            tableView.reloadRows(at: [indexPath], with: .none)
+    }
+    
+    @IBAction func addButtonTriggered(_ sender: UIBarButtonItem) {
+        addReminder()
+    }
+    
+    @IBAction func segmentedControlChanged(_ sender: UISegmentedControl) {
+        reminderListDataSource?.filter = filter
+        tableView.reloadData()
+        self.refreshProgressView()
+    }
+    
+    private func addReminder() {
+        let storyboard = UIStoryboard(name: Self.mainStoryboardName, bundle: nil)
+        let detailViewController: ReminderDetailViewController = storyboard.instantiateViewController(identifier: Self.detailViewControllerIdentifier)
+        let reminder = Reminder(id: UUID().uuidString, title: "New Reminder", dueDate: Date())
+        detailViewController.configure(with: reminder, isNew: true, addAction: { reminder in
+            if let index = self.reminderListDataSource?.add(reminder) {
+                self.tableView.insertRows(at: [IndexPath(row: index, section: 0)], with: .automatic)
+                self.refreshProgressView()
+            }
+        })
+        let navigationController = UINavigationController(rootViewController: detailViewController)
+        present(navigationController, animated: true, completion: nil)
+    }
+    
+    private func refreshProgressView() {
+        guard let percentComplete = reminderListDataSource?.percentComplete else {
+            return
         }
-        return cell
+        let totalHeight = progressContainerView.bounds.size.height
+        percentCompleteHeightConstraint.constant = totalHeight * CGFloat(percentComplete)
+        UIView.animate(withDuration: 0.2) {
+            self.progressContainerView.layoutSubviews()
+        }
     }
 }
